@@ -52,9 +52,10 @@ sam3dbody_to_glb/
 ├── output/                      # ← .glb files appear here
 ├── assets/                      # ← MHR model files (download once, git-ignored)
 ├── batch_convert.py             # convert everything in input/ → output/
-├── export_glb_pymomentum.py     # the GLB exporter (single file, all options)
+├── export_glb_pymomentum.py     # the GLB exporter (all options)
+├── mhr_params.py                # MHR parameter assembly (shared by the GLB exporter + renderer)
 ├── render_skeleton.py           # .sam3dbody → 2D skeleton MP4 (no GPU needed)
-├── render_sam3dbody.py          # .sam3dbody → 3D mesh MP4 (pyrender, EGL/OSMesa)
+├── render_sam3dbody.py          # .sam3dbody → 3D mesh MP4 (pyrender, EGL/OSMesa; pose matches the GLB)
 ├── render_npz_to_mp4.py         # per-frame NPZ dir → MP4 (SAM 3D Body demo output)
 ├── mhr_faces_lod1.npy           # MHR mesh triangles (used by the renderers)
 ├── notebooks/
@@ -140,13 +141,18 @@ python render_sam3dbody.py \
     --faces_path mhr_faces_lod1.npy \
     --mhr_model_path assets/mhr_model.pt \
     -o mesh.mp4                                            # auto-fits camera; size from source aspect
+
+# render a preview that matches a GLB exported with the same post-processing:
+python render_sam3dbody.py --input input.sam3dbody --faces_path mhr_faces_lod1.npy \
+    --mhr_model_path assets/mhr_model.pt -o mesh.mp4 --freeze-legs --freeze-root --smooth 2
 ```
 
-`render_sam3dbody.py` is a *preview* renderer (simplified parameter assembly →
-approximate pose); for a faithful animation, export a GLB with
-`export_glb_pymomentum.py` and view that. Since `.sam3dbody` files carry no
-camera pose, it auto-fits the camera to the mesh — see [USAGE.md](USAGE.md) for
-`--fit` / `--margin` / `--vfov-deg`. Headless 3D rendering uses EGL by default
+`render_sam3dbody.py` poses the mesh with the **same parameter assembly as
+`export_glb_pymomentum.py`** (shared `mhr_params.py`), so the rendered pose
+matches the GLB — it needs `mhr_head_buffers.npz` (auto-detected in `./assets`,
+or pass `--assets`). Since `.sam3dbody` files carry no camera pose it auto-fits
+the camera to the mesh — see [USAGE.md](USAGE.md) for `--fit` / `--margin` /
+`--vfov-deg` / `--neutral-shape`. Headless 3D rendering uses EGL by default
 (needs NVIDIA drivers). No GPU? Install OSMesa and `export PYOPENGL_PLATFORM=osmesa`.
 
 ---

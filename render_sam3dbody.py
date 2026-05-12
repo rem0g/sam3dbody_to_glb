@@ -42,6 +42,8 @@ import pyrender
 import trimesh
 from tqdm import tqdm
 
+import mhr_params  # pure-numpy MHR parameter assembly (no torch/pymomentum)
+
 
 # ── Rendering ──────────────────────────────────────────────────────────────
 
@@ -92,26 +94,38 @@ def render_mesh_frame(
 
 # ── MHR vertex reconstruction ──────────────────────────────────────────────
 
-def reconstruct_vertices(mhr_ts, body_pose, hand_pose, shape, expr=None):
-    """Reconstruct vertices for a single frame from MHR parameters.
+def mhr_vertices(mhr_ts, model_params204, identity45=None, expr72=None):
+    """Run the TorchScript MHR model for one frame.
 
-    Note: this uses a naive [body_pose | hand_pose][:204] assembly, which is
-    only approximately right (see export_glb_pymomentum.py for the correct
-    MHRHead pipeline). It is good enough for a preview render but the GLB
-    exporter is the source of truth for posing.
+    `model_params204` must be the *correctly assembled* 204-vector (use
+    mhr_params.build_model_params — the same code path as export_glb_pymomentum.py
+    — so the posing matches the exported GLB). `identity45` is the 45-dim shape
+    coefficient vector (None -> neutral); `expr72` the face expression vector.
     """
     import torch
-    identity = torch.tensor(shape, dtype=torch.float32).unsqueeze(0)
-    model_params = np.concatenate([np.asarray(body_pose), np.asarray(hand_pose)])
-    if model_params.shape[0] < 204:
-        model_params = np.pad(model_params, (0, 204 - model_params.shape[0]))
-    model_params = torch.tensor(model_params[:204], dtype=torch.float32).unsqueeze(0)
-    if expr is not None and np.asarray(expr).shape and np.asarray(expr).shape[0] > 0:
-        expr_t = torch.tensor(np.asarray(expr), dtype=torch.float32).unsqueeze(0)
+    mp = np.asarray(model_params204, dtype=np.float32).reshape(-1)
+    if mp.shape[0] < 204:
+        mp = np.pad(mp, (0, 204 - mp.shape[0]))
+    mp_t = torch.tensor(mp[:204], dtype=torch.float32).unsqueeze(0)
+
+    if identity45 is not None and np.size(identity45) > 0:
+        idn = np.asarray(identity45, dtype=np.float32).reshape(-1)[:45]
+        if idn.shape[0] < 45:
+            idn = np.pad(idn, (0, 45 - idn.shape[0]))
+        id_t = torch.tensor(idn, dtype=torch.float32).unsqueeze(0)
     else:
-        expr_t = torch.zeros(1, 72)
+        id_t = torch.zeros(1, 45)
+
+    if expr72 is not None and np.size(expr72) > 0:
+        ex = np.asarray(expr72, dtype=np.float32).reshape(-1)[:72]
+        if ex.shape[0] < 72:
+            ex = np.pad(ex, (0, 72 - ex.shape[0]))
+        ex_t = torch.tensor(ex, dtype=torch.float32).unsqueeze(0)
+    else:
+        ex_t = torch.zeros(1, 72)
+
     with torch.no_grad():
-        vertices, _ = mhr_ts(identity, model_params, expr_t)
+        vertices, _ = mhr_ts(id_t, mp_t, ex_t)
     return vertices.squeeze(0).cpu().numpy()
 
 
@@ -164,6 +178,23 @@ def load_multiframe_file(path):
     return result, metadata
 
 
+def find_assets_dir(explicit, input_path, mhr_model_path):
+    """Locate a directory containing mhr_head_buffers.npz."""
+    candidates = []
+    if explicit:
+        candidates.append(explicit)
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates += [os.path.join(here, "assets"), os.path.join(here, "MHR", "assets")]
+    if input_path:
+        candidates.append(os.path.dirname(os.path.abspath(input_path)))
+    if mhr_model_path:
+        candidates.append(os.path.dirname(os.path.abspath(mhr_model_path)))
+    for c in candidates:
+        if c and os.path.exists(os.path.join(c, "mhr_head_buffers.npz")):
+            return c
+    return None
+
+
 # ── Main ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -176,6 +207,10 @@ def main():
     parser.add_argument("--mhr_model_path", default=None,
                         help="TorchScript MHR model (.pt) for vertex reconstruction "
                              "(required unless the input already stores pred_vertices)")
+    parser.add_argument("--assets", default=None,
+                        help="MHR assets dir containing mhr_head_buffers.npz "
+                             "(auto-detected: ./assets, ./MHR/assets, the .sam3dbody's dir, "
+                             "the mhr model's dir)")
     parser.add_argument("--fps", type=float, default=0, help="FPS (0 = auto from metadata)")
     parser.add_argument("--width", type=int, default=0, help="Output width (0 = from source video)")
     parser.add_argument("--height", type=int, default=0, help="Output height (0 = from source video)")
@@ -194,6 +229,17 @@ def main():
     parser.add_argument("--focal_length", type=float, default=0,
                         help="Override focal length (only used by --fit bbox / vfov derivation)")
     parser.add_argument("--person_idx", type=int, default=0, help="Which person to render")
+    parser.add_argument("--neutral-shape", action="store_true",
+                        help="Use a neutral body shape instead of the file's shape_params "
+                             "(matches the GLB exporter, which uses a generic mesh)")
+    # The next three mirror export_glb_pymomentum.py so you can render a preview that
+    # matches a GLB exported with the same flags.
+    parser.add_argument("--freeze-legs", action="store_true",
+                        help="Hold leg joints in rest pose (like the GLB exporter's --freeze-legs)")
+    parser.add_argument("--freeze-root", action="store_true",
+                        help="Hold global body rotation fixed (like the GLB exporter's --freeze-root)")
+    parser.add_argument("--smooth", type=float, default=0, metavar="SIGMA",
+                        help="Gaussian temporal smoothing of model params (frames), like the GLB exporter")
     args = parser.parse_args()
 
     faces = np.load(args.faces_path)
@@ -224,10 +270,40 @@ def main():
         fps = args.fps if args.fps > 0 else src_fps
         print(f"Multi-frame file: {num_frames} frames, {fps:.2f} fps, "
               f"src {src_width or '?'}x{src_height or '?'}")
+
+        # Assemble correct (N, 204) MHR model params — same code path as
+        # export_glb_pymomentum.py — so the rendered pose matches the GLB.
+        model_params_all = None
+        if mhr_ts is not None and all(
+            k in data for k in ("body_pose_params", "hand_pose_params", "global_rot")
+        ) and "pred_vertices" not in data:
+            assets_dir = find_assets_dir(args.assets, args.input, args.mhr_model_path)
+            if assets_dir is None:
+                print("Warning: could not find mhr_head_buffers.npz (pass --assets) — "
+                      "the pose will be wrong without it.")
+            else:
+                head_buffers = mhr_params.load_head_buffers(assets_dir)
+                model_params_all, _ = mhr_params.build_model_params(data, head_buffers, every=1)
+                tags = []
+                if args.freeze_root:
+                    model_params_all = mhr_params.freeze_root(model_params_all); tags.append("frozen root")
+                if args.freeze_legs:
+                    model_params_all = mhr_params.freeze_legs(model_params_all); tags.append("frozen legs")
+                if args.smooth > 0:
+                    model_params_all = mhr_params.smooth_params(model_params_all, args.smooth)
+                    tags.append(f"smoothed σ={args.smooth:g}")
+                print(f"Assembled MHR model params: {model_params_all.shape}"
+                      + (f"  [{', '.join(tags)}]" if tags else "")
+                      + f"  (assets: {assets_dir})")
+
         for i in range(num_frames):
             frame = {}
             if "pred_vertices" in data:
                 v = data["pred_vertices"]; frame["vertices"] = v[i] if v.ndim == 3 else v
+            if model_params_all is not None and i < len(model_params_all):
+                frame["model_params204"] = model_params_all[i]
+                if "shape_params" in data:
+                    sp = data["shape_params"]; frame["identity45"] = sp[i] if sp.ndim >= 2 else sp
             if "pred_cam_t" in data:
                 ct = data["pred_cam_t"]; frame["cam_t"] = ct[i] if ct.ndim == 2 else ct
             for key in ["body_pose_params", "hand_pose_params", "shape_params",
@@ -267,12 +343,9 @@ def main():
     vmax = np.array([-np.inf, -np.inf, -np.inf])
     for frame in tqdm(frames, desc="Meshing"):
         v = frame.get("vertices")
-        if v is None and mhr_ts is not None:
-            bp, sh = frame.get("body_pose_params"), frame.get("shape_params")
-            if bp is not None and sh is not None:
-                hp = frame.get("hand_pose_params")
-                if hp is None: hp = np.zeros(108)
-                v = reconstruct_vertices(mhr_ts, bp, hp, sh, frame.get("expr_params"))
+        if v is None and mhr_ts is not None and "model_params204" in frame:
+            idn = None if args.neutral_shape else frame.get("identity45")
+            v = mhr_vertices(mhr_ts, frame["model_params204"], idn, frame.get("expr_params"))
         if v is None:
             all_vertices.append(None); continue
         v = np.asarray(v)
@@ -285,7 +358,8 @@ def main():
 
     n_valid = sum(x is not None for x in all_vertices)
     if n_valid == 0:
-        print("No meshes could be reconstructed — provide --mhr_model_path or pred_vertices."); return
+        print("No meshes could be reconstructed — give --mhr_model_path (+ --assets for "
+              "mhr_head_buffers.npz), or feed input that already contains pred_vertices."); return
 
     # ── Resolve output resolution ──
     if args.width > 0 and args.height > 0:

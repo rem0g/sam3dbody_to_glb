@@ -119,15 +119,17 @@ fingers, light blue = middle fingers, red = ring fingers.
 
 ## `render_sam3dbody.py` — `.sam3dbody` → 3D mesh MP4
 
-Reconstructs the 3D MHR mesh from the parameters and renders it with pyrender
-(headless EGL by default; needs the TorchScript MHR model and the face topology).
-By default it **auto-fits the camera to the mesh** and renders at the source
-video's aspect ratio (longest side ≤ 720 px) — `.sam3dbody` files carry no
-camera pose, so there is nothing else to frame from.
+Reconstructs the 3D MHR mesh per frame and renders it with pyrender (headless EGL
+by default). Posing uses the **same parameter assembly as `export_glb_pymomentum.py`**
+(via the shared `mhr_params.py`), so the rendered pose matches the exported GLB —
+it needs the TorchScript MHR model (`mhr_model.pt`), the face topology
+(`mhr_faces_lod1.npy`), and `mhr_head_buffers.npz` (auto-detected in `./assets`,
+`./MHR/assets`, the `.sam3dbody`'s folder, or the model's folder; or pass `--assets`).
+Since `.sam3dbody` files carry no camera pose, the camera **auto-fits to the mesh**
+and the output uses the source video's aspect ratio (longest side ≤ 720 px).
 
-> Note: this is a *preview* renderer — it uses a simplified parameter assembly,
-> so the pose is approximate (legs/global rotation especially). For a faithful
-> result, export a GLB with `export_glb_pymomentum.py` and view/render that.
+> The mesh body shape comes from the file's `shape_params` (so it resembles the
+> real person); the GLB uses a generic mesh — pass `--neutral-shape` to match it.
 
 ```bash
 # defaults: auto-fit camera, resolution from the source video
@@ -137,13 +139,14 @@ python render_sam3dbody.py \
     --mhr_model_path assets/mhr_model.pt \
     -o mesh.mp4
 
-# force a square 720p render with more padding around the body
+# match a GLB exported with `--freeze-legs --freeze-root --smooth 2`
 python render_sam3dbody.py --input input.sam3dbody --faces_path mhr_faces_lod1.npy \
-    --mhr_model_path assets/mhr_model.pt -o mesh.mp4 --width 720 --height 720 --margin 1.4
+    --mhr_model_path assets/mhr_model.pt -o mesh.mp4 --freeze-legs --freeze-root --smooth 2
 
-# every 2nd frame, custom vertical FOV
+# force a square 720p render with more padding; every 2nd frame; custom FOV
 python render_sam3dbody.py --input input.sam3dbody --faces_path mhr_faces_lod1.npy \
-    --mhr_model_path assets/mhr_model.pt -o mesh.mp4 --every 2 --vfov-deg 40
+    --mhr_model_path assets/mhr_model.pt -o mesh.mp4 --width 720 --height 720 --margin 1.4 \
+    --every 2 --vfov-deg 40
 ```
 
 | flag | default | meaning |
@@ -151,12 +154,15 @@ python render_sam3dbody.py --input input.sam3dbody --faces_path mhr_faces_lod1.n
 | `--input` | — | `.sam3dbody` file (or a directory of per-frame `.npz` files) |
 | `--faces_path` | — | mesh triangle list (`mhr_faces_lod1.npy`, shipped in this repo) |
 | `--mhr_model_path` | none | TorchScript MHR model (`mhr_model.pt`); required unless the input stores `pred_vertices` |
+| `--assets` | auto | folder with `mhr_head_buffers.npz` (needed to assemble the pose) |
 | `-o, --output_path` | `output.mp4` | output MP4 (an H.264 `_h264.mp4` copy is also written) |
 | `--width` / `--height` | `0` (auto) | output size; `0` = derive from the source video aspect |
 | `--max-size` | `720` | when size is auto, scale the longest side to this |
-| `--fit` | `auto` | camera framing: `auto` (use `pred_cam_t` if present, else fit to mesh), `mesh` (always fit to mesh), `bbox` (legacy bbox estimate), `off` (require `pred_cam_t`) |
+| `--fit` | `auto` | camera framing: `auto` (use `pred_cam_t` if present, else fit to mesh), `mesh` (always fit), `bbox` (legacy bbox estimate), `off` (require `pred_cam_t`) |
 | `--margin` | `1.25` | padding factor around the mesh when fitting to it |
 | `--vfov-deg` | `0` | vertical FOV in degrees (`0` = derive from focal length, fallback 35°) |
+| `--freeze-legs` / `--freeze-root` / `--smooth SIGMA` | off / off / `0` | same post-processing as the GLB exporter (use the same values to match a GLB) |
+| `--neutral-shape` | off | ignore `shape_params`, use a generic body (matches the GLB mesh) |
 | `--every` | `1` | render every Nth frame |
 | `--fps` | `0` (auto) | output fps (`0` = from metadata) |
 
