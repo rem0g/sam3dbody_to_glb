@@ -40,13 +40,14 @@ export LD_LIBRARY_PATH="$(python -c 'import torch,os;print(os.path.join(os.path.
 ```
 
 Prefer a guided walkthrough? Open [`notebooks/sam3dbody_to_glb.ipynb`](notebooks/sam3dbody_to_glb.ipynb).
+Just want a per-script command cheat-sheet? See [**USAGE.md**](USAGE.md).
 
 ---
 
 ## Repo layout
 
 ```
-sam3dbody-to-glb/
+sam3dbody_to_glb/
 ├── input/                       # ← drop your .sam3dbody files here
 ├── output/                      # ← .glb files appear here
 ├── assets/                      # ← MHR model files (download once, git-ignored)
@@ -205,7 +206,14 @@ cubital fossae, acromions, neck).
 
 ## Credits & licenses
 
-This repo is glue code around two Meta projects — review and comply with their licenses:
+The code in this repository is released under the [MIT License](LICENSE).
 
-- [SAM 3D Body](https://github.com/facebookresearch/sam-3d-body) — the inference model that produces `.sam3dbody` files.
-- [MHR](https://github.com/facebookresearch/MHR) — the body model whose mesh/skeleton you export.
+It is glue code around two Meta projects whose **models, weights and assets carry
+their own (more restrictive) licenses** — you must obtain and comply with those
+separately; the MIT license here does **not** cover them:
+
+- [SAM 3D Body](https://github.com/facebookresearch/sam-3d-body) — the inference model that produces `.sam3dbody` files (Meta "SAM License").
+- [MHR](https://github.com/facebookresearch/MHR) — the body model whose mesh/skeleton you export (Apache-2.0).
+
+`mhr_faces_lod1.npy` is mesh topology derived from the MHR model; it is included
+here for convenience and is governed by the MHR license, not the MIT license above.
