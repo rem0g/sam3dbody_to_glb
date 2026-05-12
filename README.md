@@ -139,11 +139,15 @@ python render_sam3dbody.py \
     --input input.sam3dbody \
     --faces_path mhr_faces_lod1.npy \
     --mhr_model_path assets/mhr_model.pt \
-    --output_path mesh.mp4
+    -o mesh.mp4                                            # auto-fits camera; size from source aspect
 ```
 
-Headless 3D rendering uses EGL by default (needs NVIDIA drivers). No GPU? Install
-OSMesa and `export PYOPENGL_PLATFORM=osmesa`.
+`render_sam3dbody.py` is a *preview* renderer (simplified parameter assembly →
+approximate pose); for a faithful animation, export a GLB with
+`export_glb_pymomentum.py` and view that. Since `.sam3dbody` files carry no
+camera pose, it auto-fits the camera to the mesh — see [USAGE.md](USAGE.md) for
+`--fit` / `--margin` / `--vfov-deg`. Headless 3D rendering uses EGL by default
+(needs NVIDIA drivers). No GPU? Install OSMesa and `export PYOPENGL_PLATFORM=osmesa`.
 
 ---
 
