@@ -1,0 +1,20 @@
+# Python 3.12 required (pymomentum has no 3.11 wheels).
+#
+# Core: GLB export
+pymomentum-cpu
+torch>=2.8,<2.9
+torchvision>=0.23,<0.24
+numpy
+scipy            # only used by export_glb_pymomentum.py --smooth
+pygltflib
+
+# Rendering scripts (render_skeleton.py needs only opencv + numpy;
+# render_sam3dbody.py / render_npz_to_mp4.py also need pyrender/trimesh/torch)
+opencv-python
+pyrender
+trimesh
+PyOpenGL==3.1.7
+tqdm
+
+# Needed only to extract assets/mhr_head_buffers.npz from the SAM 3D Body checkpoint
+huggingface_hub
